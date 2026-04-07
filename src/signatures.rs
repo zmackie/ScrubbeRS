@@ -4,10 +4,13 @@ mod generated {
     include!("generated_trufflehog.rs");
 }
 
-/// TruffleHog-style default detectors encoded as regex signatures.
-/// This set is intentionally broad and can be extended by `.scrub`.
+/// High-confidence built-in detectors safe to apply directly as redactions.
+///
+/// TruffleHog's upstream detector corpus is tracked separately, but many of
+/// those detectors rely on keyword gating and verifier callbacks. Applying the
+/// raw extracted regexes directly as redactors creates false positives.
 pub fn default_signatures() -> Vec<SignatureSpec> {
-    let mut signatures = vec![
+    vec![
         sig("aws_access_key", r"AKIA[0-9A-Z]{16}"),
         sig(
             "aws_secret_key",
@@ -46,22 +49,15 @@ pub fn default_signatures() -> Vec<SignatureSpec> {
             "oauth_bearer",
             r"(?i)authorization:\s*bearer\s+[A-Za-z0-9._\-]{20,}",
         ),
-    ];
-
-    signatures.extend(
-        generated::TRUFFLEHOG_SIGNATURES
-            .iter()
-            .map(|(name, pattern)| SignatureSpec {
-                name: (*name).to_string(),
-                pattern: (*pattern).to_string(),
-            }),
-    );
-
-    signatures
+    ]
 }
 
 pub fn trufflehog_source_commit() -> &'static str {
     generated::TRUFFLEHOG_SOURCE_COMMIT
+}
+
+pub fn trufflehog_generated_signature_count() -> usize {
+    generated::TRUFFLEHOG_SIGNATURES.len()
 }
 
 fn sig(name: &str, pattern: &str) -> SignatureSpec {

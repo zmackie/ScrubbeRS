@@ -5,7 +5,7 @@
 - A **stdin → stdout CLI** for shell pipelines.
 - A **Rust library API**.
 - Optional **Python** and **Node.js** bindings (feature-gated).
-- Built-in detector signatures inspired by common TruffleHog-style secret classes.
+- Built-in high-confidence detector signatures for direct redaction.
 - Optional `.scrub` signature files for custom org-specific patterns.
 
 ## Why this is fast
@@ -84,7 +84,7 @@ Exposed function:
 
 ## TruffleHog parity workflow
 
-TruffleHog parity is enforced with generated signatures in `src/generated_trufflehog.rs`:
+TruffleHog detector coverage is tracked in `src/generated_trufflehog.rs`:
 
 ```bash
 python scripts/sync_trufflehog_signatures.py
@@ -95,15 +95,23 @@ CI runs these commands and fails if:
 - any upstream detector directory is missing from our generated signature surface, or
 - generated signatures are missing when tests run.
 
-The sync script extracts both detector regexes and declared keyword hints from TruffleHog scanners, and falls back to a detector-name literal to keep every detector family represented in generated output.
+The generated TruffleHog data is tracked for parity and audit purposes, but it is not applied by default as raw redaction rules. Many upstream detectors rely on keyword gating and verifier callbacks, and running their extracted regexes directly creates false positives.
 
 ## Benchmark
 
-Run the built-in throughput benchmark:
+Run the native Criterion benchmark:
+
+```bash
+cargo bench --bench throughput -- --noplot
+```
+
+It generates a 64 MiB synthetic payload, injects multiple secret shapes, and compares:
+- raw `memcpy`
+- straight `std::io::copy` pass-through into a fixed buffer
+- `scrubber/in_place`
+
+For a quick single-number smoke run, you can still use:
 
 ```bash
 cargo run --release --bin scrub-bench
 ```
-
-It generates a 64 MiB synthetic payload, injects multiple secret shapes, and reports average GiB/s over repeated runs.
-

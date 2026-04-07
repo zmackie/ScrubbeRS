@@ -12,6 +12,12 @@ crate-type = ["rlib", "cdylib"]
 [[bin]]
 name = "scrubbers"
 path = "src/main.rs"
+bench = false
+
+[[bin]]
+name = "scrub-bench"
+path = "src/bin/scrub-bench.rs"
+bench = false
 
 [features]
 default = []
@@ -22,6 +28,7 @@ node = ["dep:napi", "dep:napi-derive"]
 aho-corasick = "1.1"
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+rayon = "1.10"
 regex = "1.11"
 thiserror = "1.0"
 
@@ -30,10 +37,18 @@ napi = { version = "2.16", default-features = false, features = ["napi8"], optio
 napi-derive = { version = "2.16", optional = true }
 
 [dev-dependencies]
+criterion = "0.5"
 rand = "0.8"
+
+[[bench]]
+name = "throughput"
+harness = false
 
 [profile.release]
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 
+[profile.bench]
+inherits = "release"
+panic = "abort"

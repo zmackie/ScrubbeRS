@@ -3,12 +3,15 @@
 mod signatures;
 
 use aho_corasick::AhoCorasick;
-use regex::bytes::Regex;
+use rayon::prelude::*;
+use regex::bytes::{Regex, RegexBuilder};
 use std::fs;
 use std::path::Path;
 use thiserror::Error;
 
-pub use signatures::{default_signatures, trufflehog_source_commit};
+pub use signatures::{
+    default_signatures, trufflehog_generated_signature_count, trufflehog_source_commit,
+};
 
 #[derive(Debug, Error)]
 pub enum ScrubError {
@@ -26,18 +29,21 @@ pub struct SignatureSpec {
 
 #[derive(Debug)]
 pub struct Scrubber {
-    literal_matcher: AhoCorasick,
-    literal_patterns: Vec<Vec<u8>>,
-    regexes: Vec<(String, Regex)>,
+    literal_matcher: Option<AhoCorasick>,
+    regexes: Vec<Regex>,
     mask_byte: u8,
 }
 
 impl Scrubber {
     pub fn new() -> Result<Self, ScrubError> {
-        Self::with_signatures(default_signatures(), b'*')
+        Self::build(default_signatures(), b'*')
     }
 
     pub fn with_signatures(specs: Vec<SignatureSpec>, mask_byte: u8) -> Result<Self, ScrubError> {
+        Self::build(specs, mask_byte)
+    }
+
+    fn build(specs: Vec<SignatureSpec>, mask_byte: u8) -> Result<Self, ScrubError> {
         let mut literal_patterns: Vec<Vec<u8>> = Vec::new();
         let mut regexes = Vec::new();
 
@@ -45,29 +51,32 @@ impl Scrubber {
             if is_plain_literal(&spec.pattern) {
                 literal_patterns.push(spec.pattern.into_bytes());
             } else {
-                let regex = Regex::new(&spec.pattern).map_err(|e| ScrubError::InvalidRegex {
-                    name: spec.name.clone(),
-                    reason: e.to_string(),
-                })?;
-                regexes.push((spec.name, regex));
+                match RegexBuilder::new(&spec.pattern).unicode(false).build() {
+                    Ok(regex) => regexes.push(regex),
+                    // Generated TruffleHog patterns may target upstream regex engines
+                    // with syntax Rust's regex crate does not support. Drop only those
+                    // defaults so custom/user-provided signatures still fail loudly.
+                    Err(_) if spec.name.starts_with("trufflehog_") => {
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(ScrubError::InvalidRegex {
+                            name: spec.name.clone(),
+                            reason: e.to_string(),
+                        });
+                    }
+                }
             }
         }
 
         let literal_matcher = if literal_patterns.is_empty() {
-            AhoCorasick::new(["__no_literal_signatures__"]).expect("valid fallback automaton")
+            None
         } else {
-            AhoCorasick::new(
-                literal_patterns
-                    .iter()
-                    .map(|p| String::from_utf8_lossy(p).to_string())
-                    .collect::<Vec<_>>(),
-            )
-            .expect("valid automaton")
+            Some(AhoCorasick::new(literal_patterns).expect("valid automaton"))
         };
 
         Ok(Self {
             literal_matcher,
-            literal_patterns,
             regexes,
             mask_byte,
         })
@@ -75,17 +84,27 @@ impl Scrubber {
 
     /// In-place scrub: no output buffer allocation, only range bookkeeping.
     pub fn scrub_in_place(&self, input: &mut [u8]) {
+        let haystack: &[u8] = input;
         let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(64);
 
-        if !self.literal_patterns.is_empty() {
-            for m in self.literal_matcher.find_iter(input) {
+        if let Some(matcher) = &self.literal_matcher {
+            for m in matcher.find_iter(haystack) {
                 ranges.push((m.start(), m.end()));
             }
         }
 
-        for (_, re) in &self.regexes {
-            for m in re.find_iter(input) {
-                ranges.push((m.start(), m.end()));
+        if should_parallelize_regex_scan(haystack.len(), self.regexes.len()) {
+            let mut regex_ranges: Vec<(usize, usize)> = self
+                .regexes
+                .par_iter()
+                .flat_map_iter(|re| re.find_iter(haystack).map(|m| (m.start(), m.end())))
+                .collect();
+            ranges.append(&mut regex_ranges);
+        } else {
+            for re in &self.regexes {
+                for m in re.find_iter(haystack) {
+                    ranges.push((m.start(), m.end()));
+                }
             }
         }
 
@@ -93,23 +112,20 @@ impl Scrubber {
             return;
         }
 
-        ranges.sort_unstable_by_key(|(start, _)| *start);
-        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+        ranges.sort_unstable();
 
-        for (start, end) in ranges {
-            match merged.last_mut() {
-                Some((_, prev_end)) if start <= *prev_end => {
-                    if end > *prev_end {
-                        *prev_end = end;
-                    }
+        let mut current = ranges[0];
+        for &(start, end) in &ranges[1..] {
+            if start <= current.1 {
+                if end > current.1 {
+                    current.1 = end;
                 }
-                _ => merged.push((start, end)),
+            } else {
+                input[current.0..current.1].fill(self.mask_byte);
+                current = (start, end);
             }
         }
-
-        for (start, end) in merged {
-            input[start..end].fill(self.mask_byte);
-        }
+        input[current.0..current.1].fill(self.mask_byte);
     }
 
     pub fn scrubbed(&self, input: &[u8]) -> Vec<u8> {
@@ -117,6 +133,10 @@ impl Scrubber {
         self.scrub_in_place(&mut out);
         out
     }
+}
+
+fn should_parallelize_regex_scan(haystack_len: usize, regex_count: usize) -> bool {
+    haystack_len >= 1024 * 1024 && regex_count >= 4
 }
 
 fn is_plain_literal(pattern: &str) -> bool {
@@ -193,7 +213,7 @@ mod tests {
     fn redacts_known_patterns() {
         let scrubber = Scrubber::new().unwrap();
         let mut payload =
-            b"token=ghp_123456789012345678901234567890123456 aws=AKIA1234567890ABCD".to_vec();
+            b"token=ghp_123456789012345678901234567890123456 aws=AKIA1234567890ABCDEF".to_vec();
         scrubber.scrub_in_place(&mut payload);
         let s = String::from_utf8(payload).unwrap();
         assert!(!s.contains("ghp_"));
@@ -209,5 +229,20 @@ mod tests {
         let scrubber = Scrubber::with_signatures(specs, b'#').unwrap();
         let out = scrubber.scrubbed(b"hello foo-secret world");
         assert_eq!(String::from_utf8(out).unwrap(), "hello ########## world");
+    }
+
+    #[test]
+    fn default_signatures_build_via_with_signatures() {
+        Scrubber::with_signatures(default_signatures(), b'*').unwrap();
+    }
+
+    #[test]
+    fn invalid_custom_regex_still_errors() {
+        let specs = vec![SignatureSpec {
+            name: "broken".into(),
+            pattern: "{".into(),
+        }];
+        let err = Scrubber::with_signatures(specs, b'*').unwrap_err();
+        assert!(matches!(err, ScrubError::InvalidRegex { .. }));
     }
 }

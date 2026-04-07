@@ -10,11 +10,11 @@ from collections import defaultdict
 
 REPO = "https://github.com/trufflesecurity/trufflehog.git"
 
+# Rust's regex engine can consume TruffleHog's Go `regexp` patterns directly.
+# Skip `regexp2` patterns because they rely on .NET-style constructs we can't compile.
 RAW_PATTERNS = [
     re.compile(r"regexp\.MustCompile\(`(?P<pat>[^`]+)`\)"),
     re.compile(r'regexp\.MustCompile\("(?P<pat>(?:\\.|[^"\\])+)"\)'),
-    re.compile(r"regexp2\.MustCompile\(`(?P<pat>[^`]+)`"),
-    re.compile(r'regexp2\.MustCompile\("(?P<pat>(?:\\.|[^"\\])+)"'),
 ]
 
 KEYWORD_BLOCK = re.compile(
