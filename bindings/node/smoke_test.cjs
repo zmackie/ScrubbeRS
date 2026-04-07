@@ -18,6 +18,18 @@ function assertBuffer(name, input, expected) {
   }
 }
 
+function assertLineBuffer(name, input, expected) {
+  const actual = binding.scrubLinesBuffer(input);
+  if (!Buffer.isBuffer(actual)) {
+    throw new Error(`${name}: expected Buffer result`);
+  }
+  if (!actual.equals(expected)) {
+    throw new Error(
+      `${name}: expected ${JSON.stringify(expected.toString("latin1"))}, got ${JSON.stringify(actual.toString("latin1"))}`,
+    );
+  }
+}
+
 const token = Buffer.from("ghp_123456789012345678901234567890123456", "utf8");
 const masked = Buffer.from("****************************************", "utf8");
 
@@ -41,8 +53,30 @@ assertBuffer(
   Buffer.from("safe\nprefix ghp_123456789012345678901234567890123456 suffix\n", "utf8"),
   Buffer.from("safe\nprefix **************************************** suffix\n", "utf8"),
 );
+assertLineBuffer(
+  "multiline line scrub",
+  Buffer.from("safe\nprefix ghp_123456789012345678901234567890123456 suffix\n", "utf8"),
+  Buffer.from("safe\nprefix **************************************** suffix\n", "utf8"),
+);
 assertBuffer(
   "binary redaction",
+  Buffer.concat([
+    Buffer.from([0x00]),
+    Buffer.from("prefix ", "utf8"),
+    token,
+    Buffer.from(" suffix", "utf8"),
+    Buffer.from([0xff]),
+  ]),
+  Buffer.concat([
+    Buffer.from([0x00]),
+    Buffer.from("prefix ", "utf8"),
+    masked,
+    Buffer.from(" suffix", "utf8"),
+    Buffer.from([0xff]),
+  ]),
+);
+assertLineBuffer(
+  "binary line scrub",
   Buffer.concat([
     Buffer.from([0x00]),
     Buffer.from("prefix ", "utf8"),

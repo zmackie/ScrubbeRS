@@ -34,10 +34,21 @@ def main() -> None:
     multiline_input = "safe\nprefix ghp_123456789012345678901234567890123456 suffix\n"
     multiline_output = "safe\nprefix **************************************** suffix\n"
     assert_equal("multiline text", scrubbers.scrub_text(multiline_input), multiline_output)
+    assert_equal(
+        "multiline bytes via line scrub",
+        scrubbers.scrub_lines_bytes(multiline_input.encode("utf8")),
+        multiline_output.encode("utf8"),
+    )
+    assert_equal(
+        "multiline text via line scrub",
+        scrubbers.scrub_lines_text(multiline_input),
+        multiline_output,
+    )
 
     binary_input = b"\x00prefix " + token + b" suffix\xff"
     binary_output = b"\x00prefix " + masked + b" suffix\xff"
     assert_equal("binary bytes", scrubbers.scrub_bytes(binary_input), binary_output)
+    assert_equal("binary bytes via line scrub", scrubbers.scrub_lines_bytes(binary_input), binary_output)
 
     repeated = scrubbers.scrub_text("prefix ghp_123456789012345678901234567890123456 suffix")
     assert_equal("repeat call 1", repeated, "prefix **************************************** suffix")

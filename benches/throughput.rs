@@ -45,8 +45,41 @@ fn build_payload() -> Vec<u8> {
     payload
 }
 
+fn build_line_payload() -> Vec<u8> {
+    let safe_line = b"INFO request_id=req-123 status=200 component=api message=all-good\n";
+    let secret_lines = [
+        b"INFO source=github token=ghp_123456789012345678901234567890123456 user=fixture\n"
+            .as_slice(),
+        b"INFO source=aws access_key=AKIA1234567890ABCDEF account=fixture\n".as_slice(),
+        b"INFO source=slack token=xoxb-123456789012-123456789012-abcdefghijklmnop channel=alerts\n"
+            .as_slice(),
+    ];
+
+    let mut payload = Vec::with_capacity(PAYLOAD_SIZE);
+    let mut line_idx = 0usize;
+    while payload.len() + safe_line.len() <= PAYLOAD_SIZE {
+        let line = if line_idx % 2048 == 0 {
+            secret_lines[(line_idx / 2048) % secret_lines.len()]
+        } else {
+            safe_line
+        };
+        if payload.len() + line.len() > PAYLOAD_SIZE {
+            break;
+        }
+        payload.extend_from_slice(line);
+        line_idx += 1;
+    }
+
+    if payload.len() < PAYLOAD_SIZE {
+        payload.extend(std::iter::repeat_n(b'a', PAYLOAD_SIZE - payload.len()));
+    }
+
+    payload
+}
+
 fn benchmark_throughput(c: &mut Criterion) {
     let payload = build_payload();
+    let line_payload = build_line_payload();
     let scrubber = Scrubber::new().expect("scrubber init");
 
     let mut group = c.benchmark_group("throughput");
@@ -99,6 +132,31 @@ fn benchmark_throughput(c: &mut Criterion) {
     });
 
     group.finish();
+
+    let mut streaming_group = c.benchmark_group("throughput_streaming");
+    streaming_group.throughput(Throughput::Bytes(line_payload.len() as u64));
+    streaming_group.sample_size(10);
+    streaming_group.measurement_time(Duration::from_secs(12));
+
+    streaming_group.bench_function(BenchmarkId::new("scrubber", "stream_lines"), |b| {
+        let mut sample = vec![0_u8; line_payload.len()];
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let mut reader = Cursor::new(line_payload.as_slice());
+                let mut writer = SliceWriter::new(&mut sample);
+                let start = Instant::now();
+                scrubber
+                    .scrub_lines(&mut reader, &mut writer)
+                    .expect("line scrub to buffer");
+                total += start.elapsed();
+                black_box(&sample);
+            }
+            total
+        });
+    });
+
+    streaming_group.finish();
 }
 
 criterion_group!(benches, benchmark_throughput);

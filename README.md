@@ -54,11 +54,18 @@ MY_INTERNAL_SECRET_PREFIX
 ## Rust API
 
 ```rust
+use std::io::Cursor;
 use scrubbers::Scrubber;
 
 let scrubber = Scrubber::new()?;
 let mut bytes = b"ghp_123456789012345678901234567890123456".to_vec();
 scrubber.scrub_in_place(&mut bytes);
+
+let mut output = Vec::new();
+scrubber.scrub_lines(
+    Cursor::new(b"safe\nprefix ghp_123456789012345678901234567890123456 suffix\n"),
+    &mut output,
+)?;
 ```
 
 ## Python bindings
@@ -69,9 +76,26 @@ Build the Python extension crate:
 cargo build --release --manifest-path bindings/python/Cargo.toml
 ```
 
-Exposed function:
+Exposed functions:
 
 - `scrubbers.scrub_bytes(data: bytes) -> bytes`
+- `scrubbers.scrub_text(data: str) -> str`
+- `scrubbers.scrub_lines_bytes(data: bytes) -> bytes`
+- `scrubbers.scrub_lines_text(data: str) -> str`
+
+The `scrub_lines_*` helpers apply the library's newline-delimited streaming path over the provided input.
+
+Example:
+
+```python
+import scrubbers
+
+scrubbers.scrub_text("prefix ghp_123456789012345678901234567890123456 suffix")
+# "prefix **************************************** suffix"
+
+scrubbers.scrub_lines_text("safe\nprefix ghp_123456789012345678901234567890123456 suffix\n")
+# "safe\nprefix **************************************** suffix\n"
+```
 
 ## Node.js bindings
 
@@ -81,9 +105,26 @@ Build the Node extension crate:
 cargo build --release --manifest-path bindings/node/Cargo.toml
 ```
 
-Exposed function:
+Exposed functions:
 
-- `scrub_buffer(buf: Buffer) -> Buffer`
+- `scrubBuffer(buf: Buffer) -> Buffer`
+- `scrubLinesBuffer(buf: Buffer) -> Buffer`
+
+`scrubLinesBuffer(...)` applies the library's newline-delimited streaming path over the provided buffer.
+
+Example:
+
+```js
+const { scrubBuffer, scrubLinesBuffer } = require("./scrubbers.node");
+
+scrubBuffer(Buffer.from("prefix ghp_123456789012345678901234567890123456 suffix"))
+// <Buffer 70 72 65 66 69 78 20 2a ...>
+
+scrubLinesBuffer(
+  Buffer.from("safe\nprefix ghp_123456789012345678901234567890123456 suffix\n", "utf8"),
+).toString("utf8");
+// "safe\nprefix **************************************** suffix\n"
+```
 
 Run binding smoke tests locally:
 
@@ -128,6 +169,7 @@ It generates a 64 MiB synthetic payload, injects multiple secret shapes, and com
 - raw `memcpy`
 - straight `std::io::copy` pass-through into a fixed buffer
 - `scrubber/in_place`
+- `scrubber/stream_lines`
 
 For a quick single-number smoke run, you can still use:
 
