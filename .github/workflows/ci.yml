@@ -22,8 +22,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
       - name: Sync TruffleHog signatures
         run: python scripts/sync_trufflehog_signatures.py
+
+      - name: Sync TruffleHog pattern fixtures
+        run: go run ./scripts/sync_trufflehog_pattern_fixtures.go
 
       - name: Verify TruffleHog detector coverage
         run: python scripts/verify_trufflehog_coverage.py

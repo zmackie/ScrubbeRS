@@ -29,6 +29,9 @@ cat app.log | ./target/release/scrubbers --scrub-file .scrub > redacted.log
 
 # Custom mask byte
 cat app.log | ./target/release/scrubbers --mask "#" > redacted.log
+
+# Line-oriented streaming mode for log pipelines
+tail -F app.log | ./target/release/scrubbers --stream-lines
 ```
 
 ## `.scrub` format
@@ -100,14 +103,18 @@ TruffleHog detector coverage is tracked in `src/generated_trufflehog.rs`:
 
 ```bash
 python scripts/sync_trufflehog_signatures.py
+go run ./scripts/sync_trufflehog_pattern_fixtures.go
 python scripts/verify_trufflehog_coverage.py
 ```
 
 CI runs these commands and fails if:
 - any upstream detector directory is missing from our generated signature surface, or
 - generated signatures are missing when tests run.
+- extracted positive fixtures are missing when tests run.
 
 The generated TruffleHog data is tracked for parity and audit purposes, but it is not applied by default as raw redaction rules. Many upstream detectors rely on keyword gating and verifier callbacks, and running their extracted regexes directly creates false positives.
+
+The extracted positive fixtures are also used in the Rust test suite as inline redaction cases. Each case builds literal secret fragments from the upstream positive example and asserts the scrubber preserves length while masking the matched spans in place.
 
 ## Benchmark
 

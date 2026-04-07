@@ -6,11 +6,13 @@ use aho_corasick::AhoCorasick;
 use rayon::prelude::*;
 use regex::bytes::{Regex, RegexBuilder};
 use std::fs;
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 use thiserror::Error;
 
 pub use signatures::{
-    default_signatures, trufflehog_generated_signature_count, trufflehog_source_commit,
+    default_signatures, trufflehog_detector_signatures, trufflehog_generated_signature_count,
+    trufflehog_source_commit,
 };
 
 #[derive(Debug, Error)]
@@ -133,6 +135,28 @@ impl Scrubber {
         self.scrub_in_place(&mut out);
         out
     }
+
+    /// Line-oriented streaming scrub for log-style inputs.
+    ///
+    /// This keeps memory bounded, but only detects secrets contained within a
+    /// single newline-delimited record.
+    pub fn scrub_lines<R: BufRead, W: Write>(
+        &self,
+        mut reader: R,
+        mut writer: W,
+    ) -> io::Result<()> {
+        let mut line = Vec::with_capacity(8 * 1024);
+        loop {
+            line.clear();
+            let read = reader.read_until(b'\n', &mut line)?;
+            if read == 0 {
+                return Ok(());
+            }
+
+            self.scrub_in_place(&mut line);
+            writer.write_all(&line)?;
+        }
+    }
 }
 
 fn should_parallelize_regex_scan(haystack_len: usize, regex_count: usize) -> bool {
@@ -209,5 +233,19 @@ mod tests {
         }];
         let err = Scrubber::with_signatures(specs, b'*').unwrap_err();
         assert!(matches!(err, ScrubError::InvalidRegex { .. }));
+    }
+
+    #[test]
+    fn scrub_lines_redacts_line_delimited_input() {
+        let scrubber = Scrubber::new().unwrap();
+        let input = b"safe\nprefix ghp_123456789012345678901234567890123456 suffix\n";
+        let mut output = Vec::new();
+        scrubber
+            .scrub_lines(std::io::Cursor::new(input), &mut output)
+            .unwrap();
+        assert_eq!(
+            output,
+            b"safe\nprefix **************************************** suffix\n"
+        );
     }
 }

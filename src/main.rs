@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use scrubbers::{default_signatures, parse_scrub_file, Scrubber};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -14,6 +14,10 @@ struct Args {
     /// Replacement byte (defaults to '*')
     #[arg(long, default_value = "*")]
     mask: String,
+
+    /// Process stdin incrementally by newline-delimited records.
+    #[arg(long)]
+    stream_lines: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -27,9 +31,15 @@ fn main() -> anyhow::Result<()> {
 
     let scrubber = Scrubber::with_signatures(signatures, mask_byte)?;
 
-    let mut buf = Vec::with_capacity(64 * 1024);
-    std::io::stdin().read_to_end(&mut buf)?;
-    scrubber.scrub_in_place(&mut buf);
-    std::io::stdout().write_all(&buf)?;
+    if args.stream_lines {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        scrubber.scrub_lines(BufReader::new(stdin.lock()), stdout.lock())?;
+    } else {
+        let mut buf = Vec::with_capacity(64 * 1024);
+        std::io::stdin().read_to_end(&mut buf)?;
+        scrubber.scrub_in_place(&mut buf);
+        std::io::stdout().write_all(&buf)?;
+    }
     Ok(())
 }

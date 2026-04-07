@@ -12,18 +12,27 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
 const defaultRepo = "https://github.com/trufflesecurity/trufflehog.git"
+const minInlineFragmentLen = 6
+
+var residualTokenPattern = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9_:/.=+%@~-]{19,}`)
 
 type testFixture struct {
 	Detector string
 	Name     string
 	Input    string
 	Wants    []string
+}
+
+type bindingEnv struct {
+	Strings map[string]string
+	Slices  map[string][]string
 }
 
 func main() {
@@ -89,7 +98,7 @@ func extractFixturesFromFile(root, path string) ([]testFixture, error) {
 		return nil, err
 	}
 
-	env, err := collectStringBindings(file)
+	baseEnv, err := collectBindings(file)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +116,7 @@ func extractFixturesFromFile(root, path string) ([]testFixture, error) {
 			continue
 		}
 
-		testsLit, err := findTestsCompositeLit(fn.Body)
+		testsLit, env, err := findTestsCompositeLit(fn.Body, baseEnv)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", fn.Name.Name, err)
 		}
@@ -125,8 +134,12 @@ func extractFixturesFromFile(root, path string) ([]testFixture, error) {
 	return fixtures, nil
 }
 
-func findTestsCompositeLit(body *ast.BlockStmt) (*ast.CompositeLit, error) {
+func findTestsCompositeLit(body *ast.BlockStmt, baseEnv bindingEnv) (*ast.CompositeLit, bindingEnv, error) {
+	env := cloneEnv(baseEnv)
 	for _, stmt := range body.List {
+		if updated := applyBindingStmt(stmt, env); updated {
+			continue
+		}
 		assign, ok := stmt.(*ast.AssignStmt)
 		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			continue
@@ -137,15 +150,92 @@ func findTestsCompositeLit(body *ast.BlockStmt) (*ast.CompositeLit, error) {
 		}
 		lit, ok := assign.Rhs[0].(*ast.CompositeLit)
 		if !ok {
-			return nil, fmt.Errorf("tests assignment was not a composite literal")
+			return nil, env, fmt.Errorf("tests assignment was not a composite literal")
 		}
-		return lit, nil
+		return lit, env, nil
 	}
-	return nil, nil
+	return nil, env, nil
 }
 
-func collectStringBindings(file *ast.File) (map[string]string, error) {
-	env := make(map[string]string)
+func cloneEnv(src bindingEnv) bindingEnv {
+	env := bindingEnv{
+		Strings: make(map[string]string, len(src.Strings)),
+		Slices:  make(map[string][]string, len(src.Slices)),
+	}
+	for key, value := range src.Strings {
+		env.Strings[key] = value
+	}
+	for key, values := range src.Slices {
+		env.Slices[key] = append([]string(nil), values...)
+	}
+	return env
+}
+
+func applyBindingStmt(stmt ast.Stmt, env bindingEnv) bool {
+	switch value := stmt.(type) {
+	case *ast.AssignStmt:
+		if len(value.Lhs) != len(value.Rhs) {
+			return false
+		}
+		updated := false
+		for i, lhs := range value.Lhs {
+			name, ok := lhs.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			if str, ok := evalString(value.Rhs[i], env); ok {
+				env.Strings[name.Name] = str
+				delete(env.Slices, name.Name)
+				updated = true
+				continue
+			}
+			if slice, ok := evalStringSlice(value.Rhs[i], env); ok {
+				env.Slices[name.Name] = slice
+				delete(env.Strings, name.Name)
+				updated = true
+			}
+		}
+		return updated
+	case *ast.DeclStmt:
+		gen, ok := value.Decl.(*ast.GenDecl)
+		if !ok || (gen.Tok != token.VAR && gen.Tok != token.CONST) {
+			return false
+		}
+		updated := false
+		for _, spec := range gen.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range valueSpec.Names {
+				if len(valueSpec.Values) == 0 {
+					continue
+				}
+				exprIndex := min(i, len(valueSpec.Values)-1)
+				if str, ok := evalString(valueSpec.Values[exprIndex], env); ok {
+					env.Strings[name.Name] = str
+					delete(env.Slices, name.Name)
+					updated = true
+					continue
+				}
+				if slice, ok := evalStringSlice(valueSpec.Values[exprIndex], env); ok {
+					env.Slices[name.Name] = slice
+					delete(env.Strings, name.Name)
+					updated = true
+				}
+			}
+		}
+		return updated
+	default:
+		return false
+	}
+}
+
+func collectBindings(file *ast.File) (bindingEnv, error) {
+	env := bindingEnv{
+		Strings: make(map[string]string),
+		Slices:  make(map[string][]string),
+	}
 	progress := true
 
 	for progress {
@@ -161,19 +251,23 @@ func collectStringBindings(file *ast.File) (map[string]string, error) {
 					continue
 				}
 				for i, name := range valueSpec.Names {
-					if _, exists := env[name.Name]; exists {
-						continue
-					}
 					if len(valueSpec.Values) == 0 {
 						continue
 					}
 					exprIndex := min(i, len(valueSpec.Values)-1)
-					value, ok := evalString(valueSpec.Values[exprIndex], env)
-					if !ok {
-						continue
+					if _, exists := env.Strings[name.Name]; !exists {
+						if value, ok := evalString(valueSpec.Values[exprIndex], env); ok {
+							env.Strings[name.Name] = value
+							progress = true
+							continue
+						}
 					}
-					env[name.Name] = value
-					progress = true
+					if _, exists := env.Slices[name.Name]; !exists {
+						if values, ok := evalStringSlice(valueSpec.Values[exprIndex], env); ok {
+							env.Slices[name.Name] = values
+							progress = true
+						}
+					}
 				}
 			}
 		}
@@ -182,9 +276,9 @@ func collectStringBindings(file *ast.File) (map[string]string, error) {
 	return env, nil
 }
 
-func extractFixturesFromComposite(detector string, lit *ast.CompositeLit, env map[string]string) ([]testFixture, error) {
+func extractFixturesFromComposite(detector string, lit *ast.CompositeLit, env bindingEnv) ([]testFixture, error) {
 	var fixtures []testFixture
-	for _, elt := range lit.Elts {
+	for idx, elt := range lit.Elts {
 		caseLit, ok := elt.(*ast.CompositeLit)
 		if !ok {
 			return nil, fmt.Errorf("test case was not a composite literal")
@@ -193,6 +287,9 @@ func extractFixturesFromComposite(detector string, lit *ast.CompositeLit, env ma
 		var name string
 		var input string
 		var wants []string
+		var match string
+		var shouldMatch bool
+		var hasShouldMatch bool
 		for _, field := range caseLit.Elts {
 			kv, ok := field.(*ast.KeyValueExpr)
 			if !ok {
@@ -210,7 +307,7 @@ func extractFixturesFromComposite(detector string, lit *ast.CompositeLit, env ma
 					return nil, fmt.Errorf("unsupported test name expression")
 				}
 				name = value
-			case "input":
+			case "input", "data":
 				value, ok := evalString(kv.Value, env)
 				if !ok {
 					return nil, fmt.Errorf("unsupported input expression")
@@ -222,11 +319,34 @@ func extractFixturesFromComposite(detector string, lit *ast.CompositeLit, env ma
 					return nil, fmt.Errorf("unsupported want expression")
 				}
 				wants = values
+			case "match":
+				value, ok := evalString(kv.Value, env)
+				if !ok {
+					return nil, fmt.Errorf("unsupported match expression")
+				}
+				match = value
+			case "shouldMatch":
+				value, ok := evalBool(kv.Value)
+				if !ok {
+					return nil, fmt.Errorf("unsupported shouldMatch expression")
+				}
+				shouldMatch = value
+				hasShouldMatch = true
 			}
 		}
 
-		if name == "" || input == "" {
-			return nil, fmt.Errorf("fixture missing name or input")
+		if name == "" {
+			name = fmt.Sprintf("case_%d", idx+1)
+		}
+		if input == "" {
+			return nil, fmt.Errorf("fixture missing input")
+		}
+		if len(wants) == 0 && hasShouldMatch && shouldMatch {
+			if match != "" {
+				wants = []string{match}
+			} else {
+				wants = []string{input}
+			}
 		}
 		if len(wants) == 0 {
 			continue
@@ -242,9 +362,13 @@ func extractFixturesFromComposite(detector string, lit *ast.CompositeLit, env ma
 	return fixtures, nil
 }
 
-func evalStringSlice(expr ast.Expr, env map[string]string) ([]string, bool) {
+func evalStringSlice(expr ast.Expr, env bindingEnv) ([]string, bool) {
 	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
 		return nil, true
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		values, found := env.Slices[ident.Name]
+		return values, found
 	}
 
 	lit, ok := expr.(*ast.CompositeLit)
@@ -253,16 +377,20 @@ func evalStringSlice(expr ast.Expr, env map[string]string) ([]string, bool) {
 	}
 	values := make([]string, 0, len(lit.Elts))
 	for _, elt := range lit.Elts {
-		value, ok := evalString(elt, env)
+		if value, ok := evalString(elt, env); ok {
+			values = append(values, value)
+			continue
+		}
+		nested, ok := evalStringSlice(elt, env)
 		if !ok {
 			return nil, false
 		}
-		values = append(values, value)
+		values = append(values, nested...)
 	}
 	return values, true
 }
 
-func evalString(expr ast.Expr, env map[string]string) (string, bool) {
+func evalString(expr ast.Expr, env bindingEnv) (string, bool) {
 	switch value := expr.(type) {
 	case *ast.BasicLit:
 		if value.Kind != token.STRING {
@@ -274,7 +402,7 @@ func evalString(expr ast.Expr, env map[string]string) (string, bool) {
 		}
 		return unquoted, true
 	case *ast.Ident:
-		out, ok := env[value.Name]
+		out, ok := env.Strings[value.Name]
 		return out, ok
 	case *ast.BinaryExpr:
 		if value.Op != token.ADD {
@@ -292,60 +420,158 @@ func evalString(expr ast.Expr, env map[string]string) (string, bool) {
 	case *ast.ParenExpr:
 		return evalString(value.X, env)
 	case *ast.CallExpr:
+		if ident, ok := value.Fun.(*ast.Ident); ok {
+			switch ident.Name {
+			case "generateRandomString":
+				return "ey" + strings.Repeat("A", 2001), true
+			case "makeFakeTokenString":
+				if len(value.Args) != 2 {
+					return "", false
+				}
+				token, ok := evalString(value.Args[0], env)
+				if !ok {
+					return "", false
+				}
+				domain, ok := evalString(value.Args[1], env)
+				if !ok {
+					return "", false
+				}
+				return fmt.Sprintf("auth0:\n apiToken: %s \n domain: %s", token, domain), true
+			}
+		}
 		selector, ok := value.Fun.(*ast.SelectorExpr)
 		if !ok {
 			return "", false
 		}
 		pkg, ok := selector.X.(*ast.Ident)
-		if !ok || pkg.Name != "fmt" || selector.Sel.Name != "Sprintf" || len(value.Args) == 0 {
-			return "", false
-		}
-		format, ok := evalString(value.Args[0], env)
 		if !ok {
 			return "", false
 		}
-		args := make([]any, 0, len(value.Args)-1)
-		for _, arg := range value.Args[1:] {
-			rendered, ok := evalFormatArg(arg, env)
+		switch {
+		case pkg.Name == "fmt" && selector.Sel.Name == "Sprintf" && len(value.Args) > 0:
+			format, ok := evalString(value.Args[0], env)
 			if !ok {
 				return "", false
 			}
-			args = append(args, rendered)
+			args := make([]any, 0, len(value.Args)-1)
+			for _, arg := range value.Args[1:] {
+				rendered, ok := evalFormatArg(arg, env)
+				if !ok {
+					return "", false
+				}
+				args = append(args, rendered)
+			}
+			return fmt.Sprintf(format, args...), true
+		case pkg.Name == "strings" && selector.Sel.Name == "TrimSpace" && len(value.Args) == 1:
+			input, ok := evalString(value.Args[0], env)
+			if !ok {
+				return "", false
+			}
+			return strings.TrimSpace(input), true
+		case pkg.Name == "common" && selector.Sel.Name == "GenerateRandomPassword":
+			return evalGenerateRandomPassword(value.Args)
+		case pkg.Name == "gofakeit" && selector.Sel.Name == "Username" && len(value.Args) == 0:
+			return "fixture_user", true
 		}
-		return fmt.Sprintf(format, args...), true
+		return "", false
 	default:
 		return "", false
 	}
 }
 
-func evalFormatArg(expr ast.Expr, env map[string]string) (any, bool) {
+func evalFormatArg(expr ast.Expr, env bindingEnv) (any, bool) {
 	if str, ok := evalString(expr, env); ok {
 		return str, true
 	}
 
-	switch value := expr.(type) {
-	case *ast.BasicLit:
-		switch value.Kind {
-		case token.INT:
-			n, err := strconv.Atoi(value.Value)
-			if err != nil {
-				return nil, false
-			}
-			return n, true
-		}
-	case *ast.Ident:
-		switch value.Name {
-		case "true":
-			return true, true
-		case "false":
-			return false, true
-		}
+	if n, ok := evalInt(expr); ok {
+		return n, true
 	}
-
+	if b, ok := evalBool(expr); ok {
+		return b, true
+	}
 	return nil, false
 }
 
+func evalGenerateRandomPassword(args []ast.Expr) (string, bool) {
+	if len(args) != 5 {
+		return "", false
+	}
+	hasLower, ok := evalBool(args[0])
+	if !ok {
+		return "", false
+	}
+	hasUpper, ok := evalBool(args[1])
+	if !ok {
+		return "", false
+	}
+	hasDigits, ok := evalBool(args[2])
+	if !ok {
+		return "", false
+	}
+	hasSpecial, ok := evalBool(args[3])
+	if !ok {
+		return "", false
+	}
+	length, ok := evalInt(args[4])
+	if !ok || length <= 0 {
+		return "", false
+	}
+
+	var alphabet string
+	if hasLower {
+		alphabet += "abcxyz"
+	}
+	if hasUpper {
+		alphabet += "ABCXYZ"
+	}
+	if hasDigits {
+		alphabet += "0123456789"
+	}
+	if hasSpecial {
+		alphabet += "_-!@"
+	}
+	if alphabet == "" {
+		return "", false
+	}
+
+	var out strings.Builder
+	out.Grow(length)
+	for i := 0; i < length; i++ {
+		out.WriteByte(alphabet[i%len(alphabet)])
+	}
+	return out.String(), true
+}
+
+func evalInt(expr ast.Expr) (int, bool) {
+	value, ok := expr.(*ast.BasicLit)
+	if !ok || value.Kind != token.INT {
+		return 0, false
+	}
+	n, err := strconv.Atoi(value.Value)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func evalBool(expr ast.Expr) (bool, bool) {
+	value, ok := expr.(*ast.Ident)
+	if !ok {
+		return false, false
+	}
+	switch value.Name {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 func writeFixtures(outPath, repo, commit string, fixtures []testFixture) {
+	fixtures = sanitizeFixtures(fixtures)
 	sort.Slice(fixtures, func(i, j int) bool {
 		if fixtures[i].Detector != fixtures[j].Detector {
 			return fixtures[i].Detector < fixtures[j].Detector
@@ -371,6 +597,184 @@ func writeFixtures(outPath, repo, commit string, fixtures []testFixture) {
 	fmt.Fprintln(&buf, "];")
 
 	must(os.WriteFile(outPath, buf.Bytes(), 0o644))
+}
+
+func sanitizeFixtures(fixtures []testFixture) []testFixture {
+	sanitized := make([]testFixture, 0, len(fixtures))
+	for _, fixture := range fixtures {
+		sanitized = append(sanitized, sanitizeFixture(fixture))
+	}
+	return sanitized
+}
+
+func sanitizeFixture(fixture testFixture) testFixture {
+	fragments := inlineSecretFragments(fixture.Input, fixture.Wants)
+	if len(fragments) == 0 {
+		return fixture
+	}
+
+	replacements := make(map[string]string, len(fragments))
+	for idx, fragment := range fragments {
+		replacements[fragment] = safePlaceholder(len(fragment), idx)
+	}
+
+	sanitizedInput := fixture.Input
+	for _, fragment := range fragments {
+		sanitizedInput = strings.ReplaceAll(sanitizedInput, fragment, replacements[fragment])
+	}
+	sanitizedInput = sanitizeResidualTokens(sanitizedInput, len(replacements))
+
+	sanitizedWants := make([]string, 0, len(fixture.Wants))
+	for _, want := range fixture.Wants {
+		wantFragments := orderedInlineFragments(fixture.Input, want)
+		if len(wantFragments) == 0 {
+			continue
+		}
+
+		var builder strings.Builder
+		for _, fragment := range wantFragments {
+			builder.WriteString(replacements[fragment])
+		}
+		sanitizedWants = append(sanitizedWants, builder.String())
+	}
+
+	if len(sanitizedWants) == 0 {
+		sanitizedWants = make([]string, 0, len(fragments))
+		for _, fragment := range fragments {
+			sanitizedWants = append(sanitizedWants, replacements[fragment])
+		}
+	}
+
+	return testFixture{
+		Detector: fixture.Detector,
+		Name:     fixture.Name,
+		Input:    sanitizedInput,
+		Wants:    sanitizedWants,
+	}
+}
+
+func inlineSecretFragments(input string, wants []string) []string {
+	var fragments []string
+	for _, want := range wants {
+		fragments = append(fragments, orderedInlineFragments(input, want)...)
+	}
+	pruneRedundantFragments(&fragments)
+	return fragments
+}
+
+func orderedInlineFragments(input, want string) []string {
+	var fragments []string
+	for start := 0; start < len(want); start++ {
+		matchedEnd := -1
+		for end := len(want); end > start; end-- {
+			candidate := want[start:end]
+			if len(candidate) < minInlineFragmentLen {
+				break
+			}
+			if strings.Contains(input, candidate) {
+				fragments = append(fragments, candidate)
+				matchedEnd = end
+				break
+			}
+		}
+
+		if matchedEnd >= 0 {
+			start = matchedEnd - 1
+		}
+	}
+	return fragments
+}
+
+func pruneRedundantFragments(fragments *[]string) {
+	sort.Slice(*fragments, func(i, j int) bool {
+		left := (*fragments)[i]
+		right := (*fragments)[j]
+		if len(left) != len(right) {
+			return len(left) > len(right)
+		}
+		return left < right
+	})
+
+	deduped := (*fragments)[:0]
+	for _, fragment := range *fragments {
+		duplicate := false
+		for _, existing := range deduped {
+			if existing == fragment {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			deduped = append(deduped, fragment)
+		}
+	}
+
+	pruned := deduped[:0]
+	for _, fragment := range deduped {
+		covered := false
+		for _, existing := range pruned {
+			if strings.Contains(existing, fragment) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			pruned = append(pruned, fragment)
+		}
+	}
+
+	sort.Strings(pruned)
+	*fragments = pruned
+}
+
+func safePlaceholder(length, idx int) string {
+	seed := fmt.Sprintf("fixture_%02d~", idx)
+	if len(seed) >= length {
+		return seed[:length]
+	}
+
+	var builder strings.Builder
+	builder.Grow(length)
+	for builder.Len() < length {
+		builder.WriteString(seed)
+	}
+	value := builder.String()
+	return value[:length]
+}
+
+func sanitizeResidualTokens(input string, seed int) string {
+	next := seed
+	return residualTokenPattern.ReplaceAllStringFunc(input, func(token string) string {
+		if strings.Contains(token, "fixture_") {
+			return token
+		}
+		if !hasASCIIAlpha(token) || !hasASCIIDigit(token) {
+			return token
+		}
+
+		replacement := safePlaceholder(len(token), next)
+		next++
+		return replacement
+	})
+}
+
+func hasASCIIAlpha(input string) bool {
+	for i := 0; i < len(input); i++ {
+		b := input[i]
+		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func hasASCIIDigit(input string) bool {
+	for i := 0; i < len(input); i++ {
+		if input[i] >= '0' && input[i] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func rustString(value string) string {
