@@ -597,6 +597,7 @@ func writeFixtures(outPath, repo, commit string, fixtures []testFixture) {
 	fmt.Fprintln(&buf, "];")
 
 	must(os.WriteFile(outPath, buf.Bytes(), 0o644))
+	run("rustfmt", outPath)
 }
 
 func sanitizeFixtures(fixtures []testFixture) []testFixture {
