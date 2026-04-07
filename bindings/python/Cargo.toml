@@ -1,0 +1,16 @@
+[package]
+name = "scrubbers-python-binding"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "scrubbers"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+scrubbers_core = { package = "scrubbers", path = "../.." }
+
+[build-dependencies]
+pyo3-build-config = "0.22"

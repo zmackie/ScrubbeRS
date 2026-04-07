@@ -3,7 +3,11 @@
 Build with:
 
 ```bash
-cargo build --release --features node
+cargo build --release --manifest-path bindings/node/Cargo.toml
 ```
 
-Package with your preferred napi-rs workflow.
+Smoke test locally with:
+
+```bash
+python3 scripts/test_bindings.py --binding node
+```

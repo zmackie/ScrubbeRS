@@ -4,7 +4,7 @@
 
 - A **stdin → stdout CLI** for shell pipelines.
 - A **Rust library API**.
-- Optional **Python** and **Node.js** bindings (feature-gated).
+- Optional **Python** and **Node.js** bindings.
 - Built-in high-confidence detector signatures for direct redaction.
 - Optional `.scrub` signature files for custom org-specific patterns.
 
@@ -60,10 +60,10 @@ scrubber.scrub_in_place(&mut bytes);
 
 ## Python bindings
 
-Enable `python` feature and build as an extension module (for example with `maturin`):
+Build the Python extension crate:
 
 ```bash
-cargo build --release --features python
+cargo build --release --manifest-path bindings/python/Cargo.toml
 ```
 
 Exposed function:
@@ -72,15 +72,27 @@ Exposed function:
 
 ## Node.js bindings
 
-Enable `node` feature and build with your preferred N-API workflow:
+Build the Node extension crate:
 
 ```bash
-cargo build --release --features node
+cargo build --release --manifest-path bindings/node/Cargo.toml
 ```
 
 Exposed function:
 
 - `scrub_buffer(buf: Buffer) -> Buffer`
+
+Run binding smoke tests locally:
+
+```bash
+python3 scripts/test_bindings.py --binding all
+```
+
+Benchmark the Python binding in a logging-style path:
+
+```bash
+python3 scripts/bench_python_bindings.py
+```
 
 ## TruffleHog parity workflow
 

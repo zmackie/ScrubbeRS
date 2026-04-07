@@ -170,41 +170,6 @@ pub fn parse_scrub_file(path: &Path) -> Result<Vec<SignatureSpec>, ScrubError> {
     Ok(specs)
 }
 
-#[cfg(feature = "python")]
-mod python_bindings {
-    use super::*;
-    use pyo3::prelude::*;
-    use pyo3::types::PyBytes;
-
-    #[pyfunction]
-    fn scrub_bytes(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyBytes>> {
-        let scrubber =
-            Scrubber::new().map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let out = scrubber.scrubbed(data);
-        Ok(PyBytes::new_bound(py, &out).into())
-    }
-
-    #[pymodule]
-    fn scrubbers(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-        m.add_function(wrap_pyfunction!(scrub_bytes, m)?)?;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "node")]
-mod node_bindings {
-    use super::*;
-    use napi::bindgen_prelude::Buffer;
-    use napi_derive::napi;
-
-    #[napi]
-    pub fn scrub_buffer(buf: Buffer) -> napi::Result<Buffer> {
-        let scrubber = Scrubber::new().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        let out = scrubber.scrubbed(&buf);
-        Ok(out.into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

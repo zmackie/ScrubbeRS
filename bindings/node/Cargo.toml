@@ -1,0 +1,17 @@
+[package]
+name = "scrubbers-node-binding"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "scrubbers"
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2.16", default-features = false, features = ["napi8"] }
+napi-derive = "2.16"
+scrubbers_core = { package = "scrubbers", path = "../.." }
+
+[build-dependencies]
+napi-build = "2"

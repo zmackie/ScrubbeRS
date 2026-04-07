@@ -5,9 +5,13 @@ edition = "2021"
 description = "High-throughput redaction engine + CLI"
 license = "MIT"
 
+[workspace]
+members = ["bindings/python", "bindings/node"]
+default-members = ["."]
+
 [lib]
 name = "scrubbers"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "scrubbers"
@@ -19,11 +23,6 @@ name = "scrub-bench"
 path = "src/bin/scrub-bench.rs"
 bench = false
 
-[features]
-default = []
-python = ["dep:pyo3"]
-node = ["dep:napi", "dep:napi-derive"]
-
 [dependencies]
 aho-corasick = "1.1"
 anyhow = "1.0"
@@ -31,10 +30,6 @@ clap = { version = "4.5", features = ["derive"] }
 rayon = "1.10"
 regex = "1.11"
 thiserror = "1.0"
-
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
-napi = { version = "2.16", default-features = false, features = ["napi8"], optional = true }
-napi-derive = { version = "2.16", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
