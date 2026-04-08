@@ -101,7 +101,7 @@ def main() -> int:
             if not detector_dir.is_dir() or detector_dir.name in SKIP_DIRS:
                 continue
             detector = detector_dir.name
-            for go_file in detector_dir.glob("*.go"):
+            for go_file in sorted(detector_dir.glob("*.go")):
                 if go_file.name.endswith("_test.go"):
                     continue
                 per_detector[detector].extend(extract_patterns(go_file))
@@ -113,7 +113,7 @@ def main() -> int:
                 if p not in seen:
                     seen.add(p)
                     uniq.append(p)
-            per_detector[detector] = uniq
+            per_detector[detector] = sorted(uniq)
 
             if not per_detector[detector]:
                 # Ensure detector-family coverage remains explicit in CI diffs
