@@ -1,6 +1,14 @@
-use scrubbers::{trufflehog_generated_signature_count, trufflehog_source_commit};
+use scrubbers::{
+    trufflehog_generated_detector_count, trufflehog_generated_signature_count,
+    trufflehog_source_commit,
+};
 
 include!("generated_trufflehog_pattern_fixtures.rs");
+
+#[allow(dead_code)]
+mod generated_signatures {
+    include!("../src/generated_trufflehog.rs");
+}
 
 #[test]
 fn trufflehog_sync_materialized() {
@@ -14,6 +22,10 @@ fn trufflehog_sync_materialized() {
     assert!(
         count > 0,
         "expected generated trufflehog signatures to be present"
+    );
+    assert!(
+        trufflehog_generated_detector_count() > 0,
+        "expected generated trufflehog detector inventory to be present"
     );
 }
 
@@ -32,4 +44,26 @@ fn trufflehog_pattern_fixture_sync_materialized() {
         TRUFFLEHOG_PATTERN_FIXTURE_SOURCE_COMMIT,
         "fixture and signature sync should come from the same upstream commit"
     );
+}
+
+#[test]
+fn trufflehog_signature_ids_are_stable_hashes() {
+    for &(_, name, _) in generated_signatures::TRUFFLEHOG_SIGNATURES {
+        let (prefix, suffix) = name
+            .rsplit_once('_')
+            .expect("generated signature name should contain a stable suffix");
+        assert!(
+            prefix.starts_with("trufflehog_"),
+            "expected trufflehog prefix in {name}"
+        );
+        assert_eq!(
+            suffix.len(),
+            16,
+            "expected 16-hex stable suffix in generated name {name}"
+        );
+        assert!(
+            suffix.chars().all(|ch| ch.is_ascii_hexdigit()),
+            "expected hexadecimal stable suffix in generated name {name}"
+        );
+    }
 }

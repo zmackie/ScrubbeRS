@@ -205,6 +205,8 @@ CI runs these commands and fails if:
 
 The generated TruffleHog data is tracked for parity and audit purposes, but it is not applied by default as raw redaction rules. Many upstream detectors rely on keyword gating and verifier callbacks, and running their extracted regexes directly creates false positives.
 
+`src/generated_trufflehog.rs` is treated as a parity inventory, not a public API surface. Generated signature names are content-addressed hashes of the pattern data, so reordering upstream extraction no longer renumbers the whole file.
+
 The extracted positive fixtures are also used in the Rust test suite as inline redaction cases. Each case builds literal secret fragments from the upstream positive example and asserts the scrubber preserves length while masking the matched spans in place.
 
 ## Benchmark

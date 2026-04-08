@@ -37,9 +37,15 @@ def detector_dirs(repo_dir: pathlib.Path) -> set[str]:
 
 def detectors_in_generated(generated_file: pathlib.Path) -> set[str]:
     txt = generated_file.read_text(encoding="utf-8")
-    # Names are encoded as trufflehog_<detector>_<index>
-    matches = re.findall(r'trufflehog_([a-zA-Z0-9_]+?)_\d+"', txt)
-    return set(matches)
+    block = re.search(
+        r"pub static TRUFFLEHOG_DETECTORS: &\[&str\] = &\[(?P<body>[\s\S]*?)\n\];",
+        txt,
+    )
+    if not block:
+        raise ValueError(
+            f"unable to find TRUFFLEHOG_DETECTORS in {generated_file}"
+        )
+    return set(re.findall(r'^\s*"([^"]+)",$', block.group("body"), re.MULTILINE))
 
 
 def main() -> int:
