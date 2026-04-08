@@ -36,6 +36,9 @@ jobs:
       - name: Verify TruffleHog detector coverage
         run: python scripts/verify_trufflehog_coverage.py
 
+      - name: Verify generated artifacts are committed
+        run: git diff --exit-code -- src/generated_trufflehog.rs tests/generated_trufflehog_pattern_fixtures.rs
+
       - name: Rust format check
         run: cargo fmt --check
 
@@ -43,7 +46,7 @@ jobs:
         run: cargo test --all-targets
 
       - name: Verify crates.io package
-        run: cargo publish --dry-run --locked --package scrubbers
+        run: cargo publish --dry-run --locked --allow-dirty --package scrubbers
 
   python-package:
     runs-on: ubuntu-latest
