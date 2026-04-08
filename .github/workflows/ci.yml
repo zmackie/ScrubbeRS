@@ -42,6 +42,31 @@ jobs:
       - name: Unit and integration tests
         run: cargo test --all-targets
 
+      - name: Verify crates.io package
+        run: cargo publish --dry-run --locked --package scrubbers
+
+  python-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Build and smoke test Python package
+        run: python scripts/test_python_package.py --artifact all
+
   python-binding:
     runs-on: ubuntu-latest
     steps:

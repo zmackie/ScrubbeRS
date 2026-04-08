@@ -70,10 +70,16 @@ scrubber.scrub_lines(
 
 ## Python bindings
 
-Build the Python extension crate:
+Install from PyPI once published:
 
 ```bash
-cargo build --release --manifest-path bindings/python/Cargo.toml
+uv add scrubbers
+```
+
+Build Python distributions locally with uv:
+
+```bash
+uv build
 ```
 
 Exposed functions:
@@ -95,6 +101,18 @@ scrubbers.scrub_text("prefix ghp_123456789012345678901234567890123456 suffix")
 
 scrubbers.scrub_lines_text("safe\nprefix ghp_123456789012345678901234567890123456 suffix\n")
 # "safe\nprefix **************************************** suffix\n"
+```
+
+Smoke test the built wheel and sdist locally:
+
+```bash
+python3 scripts/test_python_package.py --artifact all
+```
+
+You can still exercise the raw extension crate directly with:
+
+```bash
+cargo build --release --manifest-path bindings/python/Cargo.toml
 ```
 
 ## Node.js bindings
@@ -132,11 +150,43 @@ Run binding smoke tests locally:
 python3 scripts/test_bindings.py --binding all
 ```
 
+Verify the publishable Python package locally:
+
+```bash
+python3 scripts/test_python_package.py --artifact all
+```
+
 Benchmark the Python binding in a logging-style path:
 
 ```bash
 python3 scripts/bench_python_bindings.py
 ```
+
+## Publishing
+
+Release publishing is tag-driven through [publish.yml](.github/workflows/publish.yml):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+That workflow:
+- builds and smoke tests Python wheels on Linux, macOS, and Windows with `uv build`
+- builds and smoke tests a source distribution
+- publishes Python distributions to PyPI with Trusted Publishing
+- verifies and publishes the `scrubbers` crate to crates.io
+
+Local preflight checks:
+
+```bash
+cargo publish --dry-run --locked --package scrubbers
+python3 scripts/test_python_package.py --artifact all
+```
+
+Before the release workflow can publish, configure trusted publishers on both registries:
+- PyPI: add the GitHub repository/workflow as a trusted publisher for the `scrubbers` project and create the `pypi` environment.
+- crates.io: publish the crate manually once, then add this repository/workflow as a trusted publisher for `scrubbers` and create the `crates-io` environment.
 
 ## TruffleHog parity workflow
 

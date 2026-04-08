@@ -1,0 +1,43 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "scrubbers"
+dynamic = ["version"]
+description = "High-throughput secret redaction for Python, backed by Rust."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["redaction", "logging", "security", "secrets", "rust"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
+  "Topic :: Security",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Logging",
+]
+
+[project.urls]
+Homepage = "https://github.com/zmackie/ScrubbeRS"
+Repository = "https://github.com/zmackie/ScrubbeRS"
+Issues = "https://github.com/zmackie/ScrubbeRS/issues"
+
+[tool.maturin]
+manifest-path = "bindings/python/Cargo.toml"
+bindings = "pyo3"
+module-name = "scrubbers"
+
+[tool.uv]
+required-version = ">=0.5.20"
