@@ -37,6 +37,7 @@ type bindingEnv struct {
 
 func main() {
 	repo := flag.String("repo", defaultRepo, "TruffleHog git repository to clone")
+	ref := flag.String("ref", "", "Optional branch, tag, or commit to fetch instead of repo HEAD")
 	out := flag.String("out", "tests/generated_trufflehog_pattern_fixtures.rs", "Output Rust fixture file")
 	flag.Parse()
 
@@ -45,7 +46,7 @@ func main() {
 	defer os.RemoveAll(tmpDir)
 
 	repoDir := filepath.Join(tmpDir, "trufflehog")
-	run("git", "clone", "--depth", "1", *repo, repoDir)
+	fetchRepo(repoDir, *repo, *ref)
 	commit := strings.TrimSpace(output("git", "-C", repoDir, "rev-parse", "HEAD"))
 
 	fixtures, err := collectFixtures(repoDir)
@@ -785,6 +786,18 @@ func rustString(value string) string {
 	value = strings.ReplaceAll(value, "\r", "\\r")
 	value = strings.ReplaceAll(value, "\t", "\\t")
 	return `"` + value + `"`
+}
+
+func fetchRepo(repoDir, repo, ref string) {
+	if ref == "" {
+		run("git", "clone", "--depth", "1", repo, repoDir)
+		return
+	}
+
+	run("git", "init", repoDir)
+	run("git", "-C", repoDir, "remote", "add", "origin", repo)
+	run("git", "-C", repoDir, "fetch", "--depth", "1", "origin", ref)
+	run("git", "-C", repoDir, "checkout", "--detach", "FETCH_HEAD")
 }
 
 func run(name string, args ...string) {

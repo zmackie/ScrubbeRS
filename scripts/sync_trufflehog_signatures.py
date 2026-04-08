@@ -30,6 +30,17 @@ def run(cmd: list[str], cwd: pathlib.Path | None = None) -> str:
     return subprocess.check_output(cmd, cwd=str(cwd) if cwd else None, text=True).strip()
 
 
+def fetch_repo(repo: str, repo_dir: pathlib.Path, ref: str | None) -> None:
+    if not ref:
+        run(["git", "clone", "--depth", "1", repo, str(repo_dir)])
+        return
+
+    run(["git", "init", str(repo_dir)])
+    run(["git", "-C", str(repo_dir), "remote", "add", "origin", repo])
+    run(["git", "-C", str(repo_dir), "fetch", "--depth", "1", "origin", ref])
+    run(["git", "-C", str(repo_dir), "checkout", "--detach", "FETCH_HEAD"])
+
+
 def escape_rust_raw(pattern: str) -> str:
     if '"#' not in pattern:
         return f'r#"{pattern}"#'
@@ -74,12 +85,13 @@ def extract_keywords(file_path: pathlib.Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default=REPO)
+    parser.add_argument("--ref", default=None, help="Optional branch, tag, or commit to fetch instead of repo HEAD")
     parser.add_argument("--out", default="src/generated_trufflehog.rs")
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="trufflehog-") as tmp:
         repo_dir = pathlib.Path(tmp) / "trufflehog"
-        run(["git", "clone", "--depth", "1", args.repo, str(repo_dir)])
+        fetch_repo(args.repo, repo_dir, args.ref)
         commit = run(["git", "rev-parse", "HEAD"], cwd=repo_dir)
 
         detectors_root = repo_dir / "pkg" / "detectors"
