@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Rust
+        if: runner.os != 'Linux'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Python
@@ -35,7 +36,20 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Build linux wheel
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          manylinux: "2014"
+          args: --release --out dist -i python3.9
+
+      - name: Smoke test linux wheel
+        if: runner.os == 'Linux'
+        run: python scripts/test_python_package.py --artifact wheel --skip-build --require-publishable-linux-wheel
+
       - name: Build and smoke test wheel
+        if: runner.os != 'Linux'
         run: python scripts/test_python_package.py --artifact wheel
 
       - name: Upload wheel

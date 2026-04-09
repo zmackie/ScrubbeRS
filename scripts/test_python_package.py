@@ -67,11 +67,36 @@ def smoke_test(artifact: Path, python: str | None, verbose: bool) -> None:
     run(cmd, verbose=verbose)
 
 
-def verify_artifact(kind: str, python: str | None, verbose: bool) -> None:
+def validate_wheel_platform_tag(artifact: Path, *, require_publishable_linux_wheel: bool) -> None:
+    if sys.platform != "linux" or not require_publishable_linux_wheel:
+        return
+
+    platform_tags = artifact.stem.split("-")[-1].split(".")
+    if any(tag.startswith(("manylinux", "musllinux")) for tag in platform_tags):
+        log("info", "wheel-tag", f"{artifact.name} uses supported linux platform tags")
+        return
+
+    raise ValueError(
+        f"unsupported linux wheel platform tag(s) for PyPI upload: {','.join(platform_tags)}"
+    )
+
+
+def verify_artifact(
+    kind: str,
+    python: str | None,
+    verbose: bool,
+    *,
+    require_publishable_linux_wheel: bool,
+) -> None:
     pattern = "*.whl" if kind == "wheel" else "*.tar.gz"
     artifacts = latest_artifacts(pattern)
     if not artifacts:
         raise FileNotFoundError(f"no {kind} artifacts found in {DIST}")
+    if kind == "wheel":
+        validate_wheel_platform_tag(
+            artifacts[0],
+            require_publishable_linux_wheel=require_publishable_linux_wheel,
+        )
     smoke_test(artifacts[0], python, verbose)
 
 
@@ -98,15 +123,30 @@ def main() -> None:
         action="store_true",
         help="Stream subprocess output directly",
     )
+    parser.add_argument(
+        "--require-publishable-linux-wheel",
+        action="store_true",
+        help="On Linux, fail if the wheel platform tag is not acceptable for PyPI upload",
+    )
     args = parser.parse_args()
 
     if not args.skip_build:
         build_distributions(args.artifact, args.verbose)
 
     if args.artifact in ("wheel", "all"):
-        verify_artifact("wheel", args.python, args.verbose)
+        verify_artifact(
+            "wheel",
+            args.python,
+            args.verbose,
+            require_publishable_linux_wheel=args.require_publishable_linux_wheel,
+        )
     if args.artifact in ("sdist", "all"):
-        verify_artifact("sdist", args.python, args.verbose)
+        verify_artifact(
+            "sdist",
+            args.python,
+            args.verbose,
+            require_publishable_linux_wheel=args.require_publishable_linux_wheel,
+        )
 
     log("info", "done", f"{args.artifact} distribution checks passed")
 
