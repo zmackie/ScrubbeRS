@@ -27,20 +27,54 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Resolve pinned TruffleHog commit
+        run: |
+          echo 'TRUFFLEHOG_REF<<EOF' >> "$GITHUB_ENV"
+          sed -n 's/^pub const TRUFFLEHOG_SOURCE_COMMIT: &str = "\([^"]*\)";$/\1/p' src/generated_trufflehog.rs >> "$GITHUB_ENV"
+          echo 'EOF' >> "$GITHUB_ENV"
+
       - name: Sync TruffleHog signatures
-        run: python scripts/sync_trufflehog_signatures.py
+        run: python scripts/sync_trufflehog_signatures.py --ref "$TRUFFLEHOG_REF"
 
       - name: Sync TruffleHog pattern fixtures
-        run: go run ./scripts/sync_trufflehog_pattern_fixtures.go
+        run: go run ./scripts/sync_trufflehog_pattern_fixtures.go --ref "$TRUFFLEHOG_REF"
 
       - name: Verify TruffleHog detector coverage
-        run: python scripts/verify_trufflehog_coverage.py
+        run: python scripts/verify_trufflehog_coverage.py --ref "$TRUFFLEHOG_REF"
+
+      - name: Verify generated artifacts are committed
+        run: git diff --exit-code -- src/generated_trufflehog.rs tests/generated_trufflehog_pattern_fixtures.rs
 
       - name: Rust format check
         run: cargo fmt --check
 
       - name: Unit and integration tests
         run: cargo test --all-targets
+
+      - name: Verify crates.io package
+        run: cargo publish --dry-run --locked --allow-dirty --package scrubbers
+
+  python-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Build and smoke test Python package
+        run: python scripts/test_python_package.py --artifact all
 
   python-binding:
     runs-on: ubuntu-latest

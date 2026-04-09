@@ -11,8 +11,8 @@ use std::path::Path;
 use thiserror::Error;
 
 pub use signatures::{
-    default_signatures, trufflehog_detector_signatures, trufflehog_generated_signature_count,
-    trufflehog_source_commit,
+    default_signatures, trufflehog_detector_signatures, trufflehog_generated_detector_count,
+    trufflehog_generated_signature_count, trufflehog_source_commit,
 };
 
 #[derive(Debug, Error)]

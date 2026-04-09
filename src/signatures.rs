@@ -60,13 +60,16 @@ pub fn trufflehog_generated_signature_count() -> usize {
     generated::TRUFFLEHOG_SIGNATURES.len()
 }
 
+pub fn trufflehog_generated_detector_count() -> usize {
+    generated::TRUFFLEHOG_DETECTORS.len()
+}
+
 pub fn trufflehog_detector_signatures(detector: &str) -> Vec<SignatureSpec> {
     let detector = detector.split('/').next().unwrap_or(detector);
-    let prefix = format!("trufflehog_{detector}_");
     generated::TRUFFLEHOG_SIGNATURES
         .iter()
-        .filter(|(name, _)| name.starts_with(&prefix))
-        .map(|(name, pattern)| sig(name, pattern))
+        .filter(|(generated_detector, _, _)| *generated_detector == detector)
+        .map(|(_, name, pattern)| sig(name, pattern))
         .collect()
 }
 
