@@ -59,5 +59,86 @@ def main() -> None:
     )
 
 
+def test_scrub_writer() -> None:
+    import io
+    import logging
+
+    # --- Basic ScrubWriter usage ---
+    buf = io.StringIO()
+    writer = scrubbers.ScrubWriter(buf)
+
+    n = writer.write("token=ghp_123456789012345678901234567890123456 done")
+    writer.flush()
+    assert_equal("ScrubWriter write len", n, len("token=ghp_123456789012345678901234567890123456 done"))
+    assert_equal(
+        "ScrubWriter redacts",
+        buf.getvalue(),
+        "token=**************************************** done",
+    )
+
+    # --- Protocol methods ---
+    assert writer.writable() is True
+    assert writer.readable() is False
+    assert writer.seekable() is False
+    assert repr(writer) == "ScrubWriter(...)"
+
+    # --- Plain text passes through unchanged ---
+    buf2 = io.StringIO()
+    writer2 = scrubbers.ScrubWriter(buf2)
+    writer2.write("hello world")
+    assert_equal("ScrubWriter passthrough", buf2.getvalue(), "hello world")
+
+    # --- Integration with logging.StreamHandler ---
+    buf3 = io.StringIO()
+    handler = logging.StreamHandler(stream=scrubbers.ScrubWriter(buf3))
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    logger = logging.getLogger("scrubbers.test.writer")
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    logger.info("key=ghp_123456789012345678901234567890123456")
+
+    output = buf3.getvalue()
+    assert "ghp_" not in output, f"Secret leaked in log output: {output!r}"
+    assert "********" in output, f"Expected mask in log output: {output!r}"
+
+    logger.removeHandler(handler)
+
+
+def test_scrub_stream() -> None:
+    import io
+
+    # --- Basic ScrubStream (binary) usage ---
+    buf = io.BytesIO()
+    stream = scrubbers.ScrubStream(buf)
+
+    token = b"ghp_123456789012345678901234567890123456"
+    n = stream.write(b"prefix " + token + b" suffix")
+    stream.flush()
+    assert_equal("ScrubStream write len", n, len(b"prefix " + token + b" suffix"))
+    assert_equal(
+        "ScrubStream redacts",
+        buf.getvalue(),
+        b"prefix " + b"*" * 40 + b" suffix",
+    )
+
+    # --- Protocol methods ---
+    assert stream.writable() is True
+    assert stream.readable() is False
+    assert stream.seekable() is False
+    assert repr(stream) == "ScrubStream(...)"
+
+    # --- Plain bytes pass through ---
+    buf2 = io.BytesIO()
+    stream2 = scrubbers.ScrubStream(buf2)
+    stream2.write(b"no secrets here")
+    assert_equal("ScrubStream passthrough", buf2.getvalue(), b"no secrets here")
+
+
 if __name__ == "__main__":
     main()
+    test_scrub_writer()
+    test_scrub_stream()
+    print("All tests passed.")
