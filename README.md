@@ -169,8 +169,13 @@ python3 scripts/bench_python_bindings.py
 Release publishing is tag-driven through [publish.yml](.github/workflows/publish.yml):
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+python3 scripts/release.py
+```
+
+Dry run the release flow first:
+
+```bash
+python3 scripts/release.py --dry-run --verbose
 ```
 
 That workflow:
@@ -186,6 +191,8 @@ Local preflight checks:
 cargo publish --dry-run --locked --package scrubbers
 python3 scripts/test_python_package.py --artifact all
 ```
+
+`scripts/release.py` reads the version from the Cargo manifests, checks for tracked local changes, switches to `main`, pulls fast-forward from `origin`, pushes `main`, creates `v<version>`, and pushes the tag.
 
 Before the release workflow can publish, configure trusted publishers on both registries:
 - PyPI: add the GitHub repository/workflow as a trusted publisher for the `scrubbers` project and create the `pypi` environment.
