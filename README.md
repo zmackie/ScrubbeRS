@@ -82,6 +82,8 @@ Build Python distributions locally with uv:
 uv build
 ```
 
+On Linux, a local `uv build` wheel is useful for smoke testing but is not guaranteed to be PyPI-uploadable. The release workflow builds Linux wheels in a manylinux container.
+
 Exposed functions:
 
 - `scrubbers.scrub_bytes(data: bytes) -> bytes`
@@ -167,12 +169,18 @@ python3 scripts/bench_python_bindings.py
 Release publishing is tag-driven through [publish.yml](.github/workflows/publish.yml):
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+python3 scripts/release.py
+```
+
+Dry run the release flow first:
+
+```bash
+python3 scripts/release.py --dry-run --verbose
 ```
 
 That workflow:
-- builds and smoke tests Python wheels on Linux, macOS, and Windows with `uv build`
+- builds the Linux wheel in a manylinux2014 container and smoke tests it before upload
+- builds and smoke tests Python wheels on macOS and Windows with `uv build`
 - builds and smoke tests a source distribution
 - publishes Python distributions to PyPI with Trusted Publishing
 - verifies and publishes the `scrubbers` crate to crates.io
@@ -183,6 +191,8 @@ Local preflight checks:
 cargo publish --dry-run --locked --package scrubbers
 python3 scripts/test_python_package.py --artifact all
 ```
+
+`scripts/release.py` reads the version from the Cargo manifests, checks for tracked local changes, switches to `main`, pulls fast-forward from `origin`, pushes `main`, creates `v<version>`, and pushes the tag.
 
 Before the release workflow can publish, configure trusted publishers on both registries:
 - PyPI: add the GitHub repository/workflow as a trusted publisher for the `scrubbers` project and create the `pypi` environment.

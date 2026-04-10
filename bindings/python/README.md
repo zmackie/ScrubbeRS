@@ -1,10 +1,12 @@
 # Python binding notes
 
-Build the publishable wheel and sdist with uv:
+Build the wheel and sdist locally with uv:
 
 ```bash
 uv build
 ```
+
+On Linux, the local wheel is suitable for smoke testing but may not be acceptable to PyPI. The release workflow builds Linux wheels in a manylinux2014 container.
 
 Smoke test the built distributions locally:
 
