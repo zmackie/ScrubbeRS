@@ -18,8 +18,78 @@ on:
         default: true
 
 jobs:
+  release-state:
+    name: inspect release state
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      crate_published: ${{ steps.state.outputs.crate_published }}
+      python_published: ${{ steps.state.outputs.python_published }}
+      crate_version: ${{ steps.state.outputs.crate_version }}
+      python_version: ${{ steps.state.outputs.python_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inspect registries
+        id: state
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          import urllib.error
+          import urllib.request
+
+          def load_toml(path: str) -> dict:
+              with open(path, "rb") as handle:
+                  return tomllib.load(handle)
+
+          def load_json(url: str) -> dict | None:
+              try:
+                  with urllib.request.urlopen(url) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      return None
+                  raise
+
+          crate_version = load_toml("Cargo.toml")["package"]["version"]
+          python_version = load_toml("bindings/python/Cargo.toml")["package"]["version"]
+
+          crates_payload = load_json("https://crates.io/api/v1/crates/scrubbers")
+          crate_published = False
+          if crates_payload is not None:
+              crate_published = any(version["num"] == crate_version for version in crates_payload["versions"])
+
+          pypi_payload = load_json("https://pypi.org/pypi/scrubbers/json")
+          python_published = False
+          if pypi_payload is not None:
+              python_published = bool(pypi_payload["releases"].get(python_version))
+
+          print(
+              json.dumps(
+                  {
+                      "crate_version": crate_version,
+                      "crate_published": crate_published,
+                      "python_version": python_version,
+                      "python_published": python_published,
+                  }
+              )
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"crate_version={crate_version}", file=output)
+              print(f"crate_published={'true' if crate_published else 'false'}", file=output)
+              print(f"python_version={python_version}", file=output)
+              print(f"python_published={'true' if python_published else 'false'}", file=output)
+          PY
+
   python-wheel:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_python }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.publish_python) && needs.release-state.outputs.python_published != 'true' }}
+    needs:
+      - release-state
     name: build python wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -73,7 +143,9 @@ jobs:
           if-no-files-found: error
 
   python-sdist:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_python }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.publish_python) && needs.release-state.outputs.python_published != 'true' }}
+    needs:
+      - release-state
     name: build python sdist
     runs-on: ubuntu-latest
     permissions:
@@ -106,9 +178,10 @@ jobs:
           if-no-files-found: error
 
   pypi-publish:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_python }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.publish_python) && needs.release-state.outputs.python_published != 'true' && (needs.release-state.outputs.crate_published == 'true' || needs.crate-publish.result == 'success') }}
     name: upload release to PyPI
     needs:
+      - release-state
       - python-wheel
       - python-sdist
       - crate-publish
@@ -131,7 +204,9 @@ jobs:
           packages-dir: dist
 
   crate-publish:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_crate }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.publish_crate) && needs.release-state.outputs.crate_published != 'true' }}
+    needs:
+      - release-state
     name: publish crate to crates.io
     runs-on: ubuntu-latest
     environment: crates-io
