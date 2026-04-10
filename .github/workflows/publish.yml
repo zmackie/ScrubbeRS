@@ -4,9 +4,22 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      publish_crate:
+        description: "Publish the scrubbers crate to crates.io"
+        required: true
+        type: boolean
+        default: true
+      publish_python:
+        description: "Publish Python distributions to PyPI"
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   python-wheel:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_python }}
     name: build python wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -60,6 +73,7 @@ jobs:
           if-no-files-found: error
 
   python-sdist:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_python }}
     name: build python sdist
     runs-on: ubuntu-latest
     permissions:
@@ -92,10 +106,12 @@ jobs:
           if-no-files-found: error
 
   pypi-publish:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_python }}
     name: upload release to PyPI
     needs:
       - python-wheel
       - python-sdist
+      - crate-publish
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -115,6 +131,7 @@ jobs:
           packages-dir: dist
 
   crate-publish:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_crate }}
     name: publish crate to crates.io
     runs-on: ubuntu-latest
     environment: crates-io

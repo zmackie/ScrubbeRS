@@ -124,6 +124,16 @@ def ensure_tag_missing(tag: str, *, remote: str, verbose: bool, dry_run: bool) -
         raise RuntimeError(f"remote tag already exists on {remote}: {tag}")
 
 
+def verify_release_prereqs(*, verbose: bool) -> None:
+    log("info", "verify", "checking release prerequisites")
+    run(
+        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline"],
+        verbose=verbose,
+        capture_output=True,
+    )
+    log("info", "verify", "release prerequisites passed")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create and push a release tag from the repo version.")
     parser.add_argument(
@@ -173,6 +183,7 @@ def main() -> None:
             dry_run=args.dry_run,
         )
 
+    verify_release_prereqs(verbose=args.verbose)
     ensure_tag_missing(tag, remote=args.remote, verbose=args.verbose, dry_run=args.dry_run)
     run(["git", "push", args.remote, args.branch], verbose=args.verbose, mutate=True, dry_run=args.dry_run)
     run(["git", "tag", tag], verbose=args.verbose, mutate=True, dry_run=args.dry_run)
